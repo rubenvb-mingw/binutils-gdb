@@ -39,6 +39,7 @@
 #include "observable.h"
 #include "annotate.h"
 #include "cli/cli-decode.h"
+#include "cli/cli-option.h"
 #include "gdb_regex.h"
 #include "cli/cli-utils.h"
 #include "thread-fsm.h"
@@ -1196,6 +1197,22 @@ print_thread_info (struct ui_out *uiout, char *requested_threads, int pid)
   print_thread_info_1 (uiout, requested_threads, 1, pid, 0);
 }
 
+struct info_threads_opts
+{
+  /* For "-gid".  */
+  int show_global_ids = 0;
+};
+
+static const gdb::option::option_def info_thread_option_defs[] = {
+
+  gdb::option::switch_option_def<info_threads_opts> {
+    "gid",
+    [] (info_threads_opts *opts) { return &opts->show_global_ids; },
+    N_("Show global thread IDs."),
+  },
+
+};
+
 /* Implementation of the "info threads" command.
 
    Note: this has the drawback that it _really_ switches
@@ -1205,16 +1222,31 @@ print_thread_info (struct ui_out *uiout, char *requested_threads, int pid)
 static void
 info_threads_command (const char *arg, int from_tty)
 {
-  int show_global_ids = 0;
+  info_threads_opts it_opts;
 
-  if (arg != NULL
-      && check_for_argument (&arg, "-gid", sizeof ("-gid") - 1))
-    {
-      arg = skip_spaces (arg);
-      show_global_ids = 1;
-    }
+  const gdb::option::option_def_group grp[]
+    = {info_thread_option_defs, &it_opts};
+  gdb::option::process_options (&arg, grp);
 
-  print_thread_info_1 (current_uiout, arg, 0, -1, show_global_ids);
+  print_thread_info_1 (current_uiout, arg, 0, -1, it_opts.show_global_ids);
+}
+
+static void
+info_threads_command_completer (struct cmd_list_element *ignore,
+				completion_tracker &tracker,
+				const char *text, const char *word_ignored)
+{
+  static const gdb::option::option_def_group grp[]
+    = {info_thread_option_defs};
+
+  if (gdb::option::complete_options (tracker, &text, grp))
+    return;
+
+  /* Convenience to let the user know what the option can accept.  XXX
+     is this a good idea?  */
+  gdb::option::complete_on_all_options (tracker, grp);
+  tracker.add_completion
+    (gdb::unique_xmalloc_ptr<char> (xstrdup ("THREAD_ID_LIST")));
 }
 
 /* See gdbthread.h.  */
@@ -1424,30 +1456,26 @@ print_thread_id (struct thread_info *thr)
   return s;
 }
 
-/* If true, tp_array_compar should sort in ascending order, otherwise
-   in descending order.  */
-
-static bool tp_array_compar_ascending;
-
 /* Sort an array for struct thread_info pointers by thread ID (first
    by inferior number, and then by per-inferior thread number).  The
    order is determined by TP_ARRAY_COMPAR_ASCENDING.  */
 
 static bool
-tp_array_compar (const thread_info *a, const thread_info *b)
+tp_array_compar_ascending (const thread_info *a, const thread_info *b)
 {
   if (a->inf->num != b->inf->num)
-    {
-      if (tp_array_compar_ascending)
-	return a->inf->num < b->inf->num;
-      else
-	return a->inf->num > b->inf->num;
-    }
+    return a->inf->num < b->inf->num;
 
-  if (tp_array_compar_ascending)
-    return (a->per_inf_num < b->per_inf_num);
-  else
-    return (a->per_inf_num > b->per_inf_num);
+  return (a->per_inf_num < b->per_inf_num);
+}
+
+static bool
+tp_array_compar_descending (const thread_info *a, const thread_info *b)
+{
+  if (a->inf->num != b->inf->num)
+    return a->inf->num > b->inf->num;
+
+  return (a->per_inf_num > b->per_inf_num);
 }
 
 /* Switch to thread THR and execute CMD.
@@ -1488,6 +1516,12 @@ thr_try_catch_cmd (thread_info *thr, const char *cmd, int from_tty,
     }
 }
 
+static const gdb::option::switch_option_def<> ascending_option_def = {
+  "ascending",
+  N_("Call <command> for all threads in ascending order.\n\
+		The default is descending order."),
+};
+
 /* Apply a GDB command to a list of threads.  List syntax is a whitespace
    separated list of numbers, or ranges, or the keyword `all'.  Ranges consist
    of two numbers separated by a hyphen.  Examples:
@@ -1501,17 +1535,16 @@ thread_apply_all_command (const char *cmd, int from_tty)
 {
   qcs_flags flags;
 
-  tp_array_compar_ascending = false;
+  int ascending = false;
+
+  /* FIXME: integrate in loop, or convert loop to cli::option.  */
+
+  const gdb::option::option_def_group group
+    = {ascending_option_def.def (), &ascending};
+  gdb::option::process_options (&cmd, group);
 
   while (cmd != NULL)
     {
-      if (check_for_argument (&cmd, "-ascending", strlen ("-ascending")))
-	{
-	  cmd = skip_spaces (cmd);
-	  tp_array_compar_ascending = true;
-	  continue;
-	}
-
       if (parse_flags_qcs ("thread apply all", &cmd, &flags))
 	continue;
 
@@ -1542,7 +1575,10 @@ thread_apply_all_command (const char *cmd, int from_tty)
 	 exit.  */
       scoped_inc_dec_ref inc_dec_ref (thr_list_cpy);
 
-      std::sort (thr_list_cpy.begin (), thr_list_cpy.end (), tp_array_compar);
+      auto *sorter = (ascending
+		      ? tp_array_compar_ascending
+		      : tp_array_compar_descending);
+      std::sort (thr_list_cpy.begin (), thr_list_cpy.end (), sorter);
 
       scoped_restore_current_thread restore_thread;
 
@@ -1550,6 +1586,23 @@ thread_apply_all_command (const char *cmd, int from_tty)
 	if (thread_alive (thr))
 	  thr_try_catch_cmd (thr, cmd, from_tty, flags);
     }
+}
+
+/* Completer for "thread apply all".  */
+
+static void
+thread_apply_all_command_completer (struct cmd_list_element *ignore,
+				    completion_tracker &tracker,
+				    const char *text, const char *word)
+{
+  static const gdb::option::option_def_group group
+    = {ascending_option_def.def ()};
+
+  if (gdb::option::complete_options (tracker, &text, group))
+    return;
+
+  /* Could recurse into the completion machinery here and complete the
+     command passed as argument.  */
 }
 
 /* Implementation of the "thread apply" command.  */
@@ -1941,12 +1994,14 @@ _initialize_thread (void)
 {
   static struct cmd_list_element *thread_apply_list = NULL;
 
-  add_info ("threads", info_threads_command,
-	    _("Display currently known threads.\n\
+  cmd_list_element *c
+    = add_info ("threads", info_threads_command, _("\
+Display currently known threads.\n		    \
 Usage: info threads [-gid] [ID]...\n\
 -gid: Show global thread IDs.\n\
 If ID is given, it is a space-separated list of IDs of threads to display.\n\
 Otherwise, all threads are displayed."));
+  set_cmd_completer_handle_brkchars (c, info_threads_command_completer);
 
   add_prefix_cmd ("thread", class_run, thread_command, _("\
 Use this command to switch between threads.\n\
@@ -1970,8 +2025,8 @@ ID is a space-separated list of IDs of threads to apply COMMAND on.\n"
 THREAD_APPLY_FLAGS_HELP),
 		  &thread_apply_list, "thread apply ", 1, &thread_cmd_list);
 
-  add_cmd ("all", class_run, thread_apply_all_command,
-	   _("\
+  c = add_cmd ("all", class_run, thread_apply_all_command,
+	       _("\
 Apply a command to all threads.\n\
 \n\
 Usage: thread apply all [-ascending] [FLAG]... COMMAND\n\
@@ -1979,6 +2034,7 @@ Usage: thread apply all [-ascending] [FLAG]... COMMAND\n\
             The default is descending order.\n"
 THREAD_APPLY_FLAGS_HELP),
 	   &thread_apply_list);
+  set_cmd_completer_handle_brkchars (c, thread_apply_all_command_completer);
 
   add_com ("taas", class_run, taas_command, _("\
 Apply a command to all threads (ignoring errors and empty output).\n\

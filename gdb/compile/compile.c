@@ -23,6 +23,7 @@
 #include "command.h"
 #include "cli/cli-script.h"
 #include "cli/cli-utils.h"
+#include "cli/cli-option.h"
 #include "completer.h"
 #include "gdbcmd.h"
 #include "compile.h"
@@ -235,55 +236,78 @@ show_compile_debug (struct ui_file *file, int from_tty,
 
 
 
-/* Check *ARG for a "-raw" or "-r" argument.  Return 0 if not seen.
-   Return 1 if seen and update *ARG.  */
+static const gdb::option::switch_option_def<> compile_option_raw = {
+  "raw",
+  N_("Suppress automatic 'void _gdb_expr () { CODE }' wrapping."),
+};
 
-static int
-check_raw_argument (const char **arg)
+struct compile_options
 {
-  *arg = skip_spaces (*arg);
+  int raw = false;
 
-  if (arg != NULL
-      && (check_for_argument (arg, "-raw", sizeof ("-raw") - 1)
-	  || check_for_argument (arg, "-r", sizeof ("-r") - 1)))
-      return 1;
-  return 0;
-}
+  void process (const char **args)
+  {
+    const gdb::option::option_def_group options
+      = {compile_option_raw.def (), &raw};
+    gdb::option::process_options (args, options);
+  }
+
+  static bool complete (completion_tracker &tracker,
+			const char **args)
+  {
+    const gdb::option::option_def_group options
+      = {compile_option_raw.def (), NULL};
+    return gdb::option::complete_options (tracker, args, options);
+  }
+};
 
 /* Handle the input from the 'compile file' command.  The "compile
    file" command is used to evaluate an expression contained in a file
    that may contain calls to the GCC compiler.  */
 
 static void
-compile_file_command (const char *arg, int from_tty)
+compile_file_command (const char *args, int from_tty)
 {
-  enum compile_i_scope_types scope = COMPILE_I_SIMPLE_SCOPE;
-
   scoped_restore save_async = make_scoped_restore (&current_ui->async, 0);
 
   /* Check the user did not just <enter> after command.  */
-  if (arg == NULL)
+  if (args == NULL)
     error (_("You must provide a filename for this command."));
 
   /* Check if a raw (-r|-raw) argument is provided.  */
-  if (arg != NULL && check_raw_argument (&arg))
-    {
-      scope = COMPILE_I_RAW_SCOPE;
-      arg = skip_spaces (arg);
-    }
+  compile_options options;
+
+  options.process (&args);
+
+  enum compile_i_scope_types scope
+    = options.raw ? COMPILE_I_RAW_SCOPE : COMPILE_I_SIMPLE_SCOPE;
+
+  args = skip_spaces (args);
 
   /* After processing arguments, check there is a filename at the end
      of the command.  */
-  if (arg[0] == '\0')
+  if (args[0] == '\0')
     error (_("You must provide a filename with the raw option set."));
 
-  if (arg[0] == '-')
+  if (args[0] == '-')
     error (_("Unknown argument specified."));
 
-  arg = skip_spaces (arg);
-  gdb::unique_xmalloc_ptr<char> abspath = gdb_abspath (arg);
+  args = skip_spaces (args);
+  gdb::unique_xmalloc_ptr<char> abspath = gdb_abspath (args);
   std::string buffer = string_printf ("#include \"%s\"\n", abspath.get ());
   eval_compile_command (NULL, buffer.c_str (), scope, NULL);
+}
+
+static void
+compile_file_command_completer (struct cmd_list_element *ignore,
+				completion_tracker &tracker,
+				const char *text, const char *word)
+{
+  if (compile_options::complete (tracker, &text))
+    return;
+
+  word = advance_to_filename_complete_word_point (tracker, text);
+  filename_completer (ignore, tracker, text, word);
 }
 
 /* Handle the input from the 'compile code' command.  The
@@ -292,28 +316,18 @@ compile_file_command (const char *arg, int from_tty)
    compile command is the language currently set in GDB.  */
 
 static void
-compile_code_command (const char *arg, int from_tty)
+compile_code_command (const char *args, int from_tty)
 {
-  enum compile_i_scope_types scope = COMPILE_I_SIMPLE_SCOPE;
-
   scoped_restore save_async = make_scoped_restore (&current_ui->async, 0);
 
-  if (arg != NULL && check_raw_argument (&arg))
-    {
-      scope = COMPILE_I_RAW_SCOPE;
-      arg = skip_spaces (arg);
-    }
+  compile_options options;
+  options.process (&args);
 
-  arg = skip_spaces (arg);
+  enum compile_i_scope_types scope
+    = options.raw ? COMPILE_I_RAW_SCOPE : COMPILE_I_SIMPLE_SCOPE;
 
-  if (arg != NULL && !check_for_argument (&arg, "--", sizeof ("--") - 1))
-    {
-      if (arg[0] == '-')
-	error (_("Unknown argument specified."));
-    }
-
-  if (arg && *arg)
-    eval_compile_command (NULL, arg, scope, NULL);
+  if (args && *args)
+    eval_compile_command (NULL, args, scope, NULL);
   else
     {
       counted_command_line l = get_command_line (compile_control, "");
@@ -321,6 +335,18 @@ compile_code_command (const char *arg, int from_tty)
       l->control_u.compile.scope = scope;
       execute_control_command_untraced (l.get ());
     }
+}
+
+static void
+compile_code_command_completer (struct cmd_list_element *ignore,
+				completion_tracker &tracker,
+				const char *text, const char *word)
+{
+   if (compile_options::complete (tracker, &text))
+    return;
+
+  word = advance_to_expression_complete_word_point (tracker, text);
+  expression_completer (ignore, tracker, text, word);
 }
 
 /* Callback for compile_print_command.  */
@@ -346,6 +372,13 @@ compile_print_command (const char *arg, int from_tty)
 
   scoped_restore save_async = make_scoped_restore (&current_ui->async, 0);
 
+  value_print_options print_opts;
+
+  get_user_print_options (&print_opts);
+  /* Override global settings with explicit options, if any.  */
+  value_print_options_process (print_opts, &arg);
+  /* XXX we're not actually passing down the options.  */
+
   /* Passing &FMT as SCOPE_DATA is safe as do_module_cleanup will not
      touch the stale pointer if compile_object_run has already quit.  */
   print_command_parse_format (&arg, "compile print", &fmt);
@@ -361,6 +394,10 @@ compile_print_command (const char *arg, int from_tty)
       execute_control_command_untraced (l.get ());
     }
 }
+
+extern void print_command_completer (struct cmd_list_element *ignore,
+				     completion_tracker &tracker,
+				     const char *text, const char *word);
 
 /* A cleanup function to remove a directory and all its contents.  */
 
@@ -918,8 +955,8 @@ Command to compile source code and inject it into the inferior."),
 		  &compile_command_list, "compile ", 1, &cmdlist);
   add_com_alias ("expression", "compile", class_obscure, 0);
 
-  add_cmd ("code", class_obscure, compile_code_command,
-	   _("\
+  c = add_cmd ("code", class_obscure, compile_code_command,
+	       _("\
 Compile, inject, and execute code.\n\
 \n\
 Usage: compile code [-r|-raw] [--] [CODE]\n\
@@ -935,7 +972,8 @@ Alternatively, you can type a multiline expression by invoking\n\
 this command with no argument.  GDB will then prompt for the\n\
 expression interactively; type a line containing \"end\" to\n\
 indicate the end of the expression."),
-	   &compile_command_list);
+	       &compile_command_list);
+  set_cmd_completer_handle_brkchars (c, compile_code_command_completer);
 
   c = add_cmd ("file", class_obscure, compile_file_command,
 	       _("\
@@ -944,10 +982,10 @@ Evaluate a file containing source code.\n\
 Usage: compile file [-r|-raw] [FILENAME]\n\
 -r|-raw: Suppress automatic 'void _gdb_expr () { CODE }' wrapping."),
 	       &compile_command_list);
-  set_cmd_completer (c, filename_completer);
+  set_cmd_completer_handle_brkchars (c, compile_file_command_completer);
 
-  add_cmd ("print", class_obscure, compile_print_command,
-	   _("\
+  c = add_cmd ("print", class_obscure, compile_print_command,
+	       _("\
 Evaluate EXPR by using the compiler and print result.\n\
 \n\
 Usage: compile print[/FMT] [EXPR]\n\
@@ -963,7 +1001,8 @@ indicate the end of the expression.\n\
 \n\
 EXPR may be preceded with /FMT, where FMT is a format letter\n\
 but no count or size letter (see \"x\" command)."),
-	   &compile_command_list);
+	       &compile_command_list);
+  set_cmd_completer_handle_brkchars (c, print_command_completer);
 
   add_setshow_boolean_cmd ("compile", class_maintenance, &compile_debug, _("\
 Set compile command debugging."), _("\

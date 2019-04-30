@@ -23,6 +23,22 @@ struct cmd_list_element;
    Returns 1 for true, 0 for false, and -1 if invalid.  */
 extern int parse_cli_boolean_value (const char *arg);
 
+/* Same as above, but work with a pointer to pointer.  ARG is advanced
+   past a successfully parsed value.  */
+extern int parse_cli_boolean_value (const char **arg);
+
+/* Parse ARG, an option to a var_uinteger or var_zuinteger variable.
+   Either returns the parsed value on success or throws an error.  */
+extern unsigned int parse_cli_var_uinteger (var_types var_type,
+					    const char **arg);
+
+/* Parse ARG, an option to a var_enum variable.  ENUM is a
+   null-terminated array of possible values. Either returns the parsed
+   value on success or throws an error.  ARG is advanced past the
+   parsed value.  */
+const char *parse_cli_var_enum (const char **args,
+				const char *const *enums);
+
 extern void do_set_command (const char *arg, int from_tty,
 			    struct cmd_list_element *c);
 extern void do_show_command (const char *arg, int from_tty,

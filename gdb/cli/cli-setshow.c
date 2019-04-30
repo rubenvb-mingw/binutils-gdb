@@ -75,31 +75,41 @@ parse_auto_binary_operation (const char *arg)
 /* See cli-setshow.h.  */
 
 int
-parse_cli_boolean_value (const char *arg)
+parse_cli_boolean_value (const char **arg)
 {
-  int length;
-
-  if (!arg || !*arg)
+  if (check_for_argument (arg, "on")
+      || check_for_argument (arg, "1")
+      || check_for_argument (arg, "yes")
+      || check_for_argument (arg, "enable"))
     return 1;
-
-  length = strlen (arg);
-
-  while (arg[length - 1] == ' ' || arg[length - 1] == '\t')
-    length--;
-
-  if (strncmp (arg, "on", length) == 0
-      || strncmp (arg, "1", length) == 0
-      || strncmp (arg, "yes", length) == 0
-      || strncmp (arg, "enable", length) == 0)
-    return 1;
-  else if (strncmp (arg, "off", length) == 0
-	   || strncmp (arg, "0", length) == 0
-	   || strncmp (arg, "no", length) == 0
-	   || strncmp (arg, "disable", length) == 0)
+  else if (check_for_argument (arg, "off")
+	   || check_for_argument (arg, "0")
+	   || check_for_argument (arg, "no")
+	   || check_for_argument (arg, "disable"))
     return 0;
   else
     return -1;
 }
+
+/* See cli-setshow.h.  */
+
+int
+parse_cli_boolean_value (const char *arg)
+{
+  if (!arg || !*arg)
+    return 1;
+
+  int b = parse_cli_boolean_value (&arg);
+  if (b >= 0)
+    {
+      arg = skip_spaces (arg);
+      if (*arg != '\0')
+	return -1;
+    }
+
+  return b;
+}
+
 
 void
 deprecated_show_value_hack (struct ui_file *ignore_file,
@@ -129,17 +139,107 @@ deprecated_show_value_hack (struct ui_file *ignore_file,
 
 /* Returns true if ARG is "unlimited".  */
 
-static int
-is_unlimited_literal (const char *arg)
+static bool
+is_unlimited_literal (const char **arg)
 {
   size_t len = sizeof ("unlimited") - 1;
 
-  arg = skip_spaces (arg);
+  *arg = skip_spaces (*arg);
 
-  return (strncmp (arg, "unlimited", len) == 0
-	  && (isspace (arg[len]) || arg[len] == '\0'));
+  if (strncmp (*arg, "unlimited", len) == 0
+      && (isspace ((*arg)[len]) || (*arg)[len] == '\0'))
+    {
+      *arg += len;
+      return true;
+    }
+
+  return false;
 }
 
+/* See cli-setshow.h.  */
+
+unsigned int
+parse_cli_var_uinteger (var_types var_type, const char **arg)
+{
+  LONGEST val;
+
+  if (*arg == NULL)
+    {
+      if (var_type == var_uinteger)
+	error_no_arg (_("integer to set it to, or \"unlimited\"."));
+      else
+	error_no_arg (_("integer to set it to."));
+    }
+
+  if (var_type == var_uinteger && is_unlimited_literal (arg))
+    val = 0;
+  else
+    val = get_ulongest (arg);
+
+  if (var_type == var_uinteger && val == 0)
+    val = UINT_MAX;
+  else if (val < 0
+	   /* For var_uinteger, don't let the user set the value
+	      to UINT_MAX directly, as that exposes an
+	      implementation detail to the user interface.  */
+	   || (var_type == var_uinteger && val >= UINT_MAX)
+	   || (var_type == var_zuinteger && val > UINT_MAX))
+    error (_("integer %s out of range"), plongest (val));
+
+  return val;
+}
+
+/* See cli-setshow.h.  */
+
+const char *
+parse_cli_var_enum (const char **args, const char *const *enums)
+{
+  /* If no argument was supplied, print an informative error
+     message.  */
+  if (args == NULL || *args == NULL)
+    {
+      std::string msg;
+
+      for (size_t i = 0; enums[i]; i++)
+	{
+	  if (i != 0)
+	    msg += ", ";
+	  msg += enums[i];
+	}
+      error (_("Requires an argument. Valid arguments are %s."),
+	     msg.c_str ());
+    }
+
+  const char *p = skip_to_space (*args);
+  size_t len = p - *args;
+
+  int nmatches = 0;
+  const char *match = NULL;
+  for (size_t i = 0; enums[i]; i++)
+    if (strncmp (*args, enums[i], len) == 0)
+      {
+	if (enums[i][len] == '\0')
+	  {
+	    match = enums[i];
+	    nmatches = 1;
+	    break; /* Exact match.  */
+	  }
+	else
+	  {
+	    match = enums[i];
+	    nmatches++;
+	  }
+      }
+
+  if (nmatches == 0)
+    error (_("Undefined item: \"%.*s\"."), (int) len, *args);
+
+  if (nmatches > 1)
+    error (_("Ambiguous item \"%.*s\"."), (int) len, *args);
+
+  *args += len;
+  return match;
+}
 
 /* Do a "set" command.  ARG is NULL if no argument, or the
    text of the argument, and FROM_TTY is nonzero if this command is
@@ -286,30 +386,7 @@ do_set_command (const char *arg, int from_tty, struct cmd_list_element *c)
     case var_uinteger:
     case var_zuinteger:
       {
-	LONGEST val;
-
-	if (arg == NULL)
-	  {
-	    if (c->var_type == var_uinteger)
-	      error_no_arg (_("integer to set it to, or \"unlimited\"."));
-	    else
-	      error_no_arg (_("integer to set it to."));
-	  }
-
-	if (c->var_type == var_uinteger && is_unlimited_literal (arg))
-	  val = 0;
-	else
-	  val = parse_and_eval_long (arg);
-
-	if (c->var_type == var_uinteger && val == 0)
-	  val = UINT_MAX;
-	else if (val < 0
-		 /* For var_uinteger, don't let the user set the value
-		    to UINT_MAX directly, as that exposes an
-		    implementation detail to the user interface.  */
-		 || (c->var_type == var_uinteger && val >= UINT_MAX)
-		 || (c->var_type == var_zuinteger && val > UINT_MAX))
-	  error (_("integer %s out of range"), plongest (val));
+	unsigned int val = parse_cli_var_uinteger (c->var_type, &arg);
 
 	if (*(unsigned int *) c->var != val)
 	  {
@@ -332,7 +409,7 @@ do_set_command (const char *arg, int from_tty, struct cmd_list_element *c)
 	      error_no_arg (_("integer to set it to."));
 	  }
 
-	if (c->var_type == var_integer && is_unlimited_literal (arg))
+	if (c->var_type == var_integer && is_unlimited_literal (&arg))
 	  val = 0;
 	else
 	  val = parse_and_eval_long (arg);
@@ -357,57 +434,11 @@ do_set_command (const char *arg, int from_tty, struct cmd_list_element *c)
       }
     case var_enum:
       {
-	int i;
-	int len;
-	int nmatches;
-	const char *match = NULL;
-	const char *p;
+	const char *match = parse_cli_var_enum (&arg, c->enums);
 
-	/* If no argument was supplied, print an informative error
-	   message.  */
-	if (arg == NULL)
-	  {
-	    std::string msg;
-
-	    for (i = 0; c->enums[i]; i++)
-	      {
-		if (i != 0)
-		  msg += ", ";
-		msg += c->enums[i];
-	      }
-	    error (_("Requires an argument. Valid arguments are %s."), 
-		   msg.c_str ());
-	  }
-
-	p = strchr (arg, ' ');
-
-	if (p)
-	  len = p - arg;
-	else
-	  len = strlen (arg);
-
-	nmatches = 0;
-	for (i = 0; c->enums[i]; i++)
-	  if (strncmp (arg, c->enums[i], len) == 0)
-	    {
-	      if (c->enums[i][len] == '\0')
-		{
-		  match = c->enums[i];
-		  nmatches = 1;
-		  break; /* Exact match.  */
-		}
-	      else
-		{
-		  match = c->enums[i];
-		  nmatches++;
-		}
-	    }
-
-	if (nmatches <= 0)
-	  error (_("Undefined item: \"%s\"."), arg);
-
-	if (nmatches > 1)
-	  error (_("Ambiguous item \"%s\"."), arg);
+	arg = skip_spaces (arg);
+	if (*arg != '\0')
+	  error (_("garbage: %s"), arg);
 
 	if (*(const char **) c->var != match)
 	  {
@@ -424,7 +455,7 @@ do_set_command (const char *arg, int from_tty, struct cmd_list_element *c)
 	if (arg == NULL)
 	  error_no_arg (_("integer to set it to, or \"unlimited\"."));
 
-	if (is_unlimited_literal (arg))
+	if (is_unlimited_literal (&arg))
 	  val = -1;
 	else
 	  val = parse_and_eval_long (arg);
