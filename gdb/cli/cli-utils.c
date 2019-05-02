@@ -19,6 +19,7 @@
 
 #include "defs.h"
 #include "cli/cli-utils.h"
+#include "cli/cli-option.h"
 #include "value.h"
 
 #include <ctype.h>
@@ -515,32 +516,36 @@ check_for_argument (const char **str, const char *arg, int arg_len)
   return 0;
 }
 
+using qcs_switch_option_def
+  = gdb::option::switch_option_def<qcs_flags>;
+
+const gdb::option::option_def qcs_flags_option_defs[] = {
+  qcs_switch_option_def {
+    "q", [] (qcs_flags *opt) { return &opt->quiet; },
+    N_("Set printing of addresses."),
+    NULL, /* help_doc */
+  },
+
+  qcs_switch_option_def {
+    "c", [] (qcs_flags *opt) { return &opt->cont; },
+    N_("Set printing of addresses."),
+    NULL, /* help_doc */
+  },
+
+  qcs_switch_option_def {
+    "s", [] (qcs_flags *opt) { return &opt->silent; },
+    N_("Set printing of addresses."),
+    NULL, /* help_doc */
+  },
+};
+
 /* See documentation in cli-utils.h.  */
 
-int
-parse_flags (const char **str, const char *flags)
+void
+validate_flags_qcs (const char *which_command, qcs_flags *flags)
 {
-  const char *p = skip_spaces (*str);
-
-  if (p[0] == '-'
-      && isalpha (p[1])
-      && (p[2] == '\0' || isspace (p[2])))
-    {
-      const char pf = p[1];
-      const char *f = flags;
-
-      while (*f != '\0')
-	{
-	  if (*f == pf)
-	    {
-	      *str = skip_spaces (p + 2);
-	      return f - flags + 1;
-	    }
-	  f++;
-	}
-    }
-
-  return 0;
+  if (flags->cont && flags->silent)
+    error (_("%s: -c and -s are mutually exclusive"), which_command);
 }
 
 /* See documentation in cli-utils.h.  */
@@ -549,25 +554,13 @@ bool
 parse_flags_qcs (const char *which_command, const char **str,
 		 qcs_flags *flags)
 {
-  switch (parse_flags (str, "qcs"))
-    {
-    case 0:
-      return false;
-    case 1:
-      flags->quiet = true;
-      break;
-    case 2:
-      flags->cont = true;
-      break;
-    case 3:
-      flags->silent = true;
-      break;
-    default:
-      gdb_assert_not_reached ("int qcs flag out of bound");
-    }
+  const gdb::option::option_def_group grp[] = {
+    { {qcs_flags_option_defs}, flags },
+  };
 
-  if (flags->cont && flags->silent)
-    error (_("%s: -c and -s are mutually exclusive"), which_command);
+  gdb::option::process_options (str, grp);
+
+  validate_flags_qcs (which_command, flags);
 
   return true;
 }

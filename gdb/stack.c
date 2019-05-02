@@ -2805,10 +2805,13 @@ frame_apply_command_count (const char *which_command,
 			   struct frame_info *trailing, int count)
 {
   qcs_flags flags;
-  struct frame_info *fi;
 
-  while (cmd != NULL && parse_flags_qcs (which_command, &cmd, &flags))
-    ;
+  const gdb::option::option_def_group group
+    = { qcs_flags_option_defs, &flags };
+
+  gdb::option::process_options (&cmd, group);
+
+  validate_flags_qcs (which_command, &flags);
 
   if (cmd == NULL || *cmd == '\0')
     error (_("Please specify a command to apply on the selected frames"));
@@ -2819,7 +2822,7 @@ frame_apply_command_count (const char *which_command,
      these also.  */
   scoped_restore_current_thread restore_thread;
 
-  for (fi = trailing; fi && count--; fi = get_prev_frame (fi))
+  for (frame_info *fi = trailing; fi && count--; fi = get_prev_frame (fi))
     {
       QUIT;
 

@@ -1533,23 +1533,17 @@ static const gdb::option::switch_option_def<> ascending_option_def = {
 static void
 thread_apply_all_command (const char *cmd, int from_tty)
 {
+  int ascending = false;
   qcs_flags flags;
 
-  int ascending = false;
+  const gdb::option::option_def_group group[] = {
+    { ascending_option_def.def (), &ascending},
+    { qcs_flags_option_defs, &flags },
+  };
 
-  /* FIXME: integrate in loop, or convert loop to cli::option.  */
-
-  const gdb::option::option_def_group group
-    = {ascending_option_def.def (), &ascending};
   gdb::option::process_options (&cmd, group);
 
-  while (cmd != NULL)
-    {
-      if (parse_flags_qcs ("thread apply all", &cmd, &flags))
-	continue;
-
-      break;
-    }
+  validate_flags_qcs ("thread apply all", &flags);
 
   if (cmd == NULL || *cmd == '\000')
     error (_("Please specify a command at the end of 'thread apply all'"));
@@ -1595,8 +1589,10 @@ thread_apply_all_command_completer (struct cmd_list_element *ignore,
 				    completion_tracker &tracker,
 				    const char *text, const char *word)
 {
-  static const gdb::option::option_def_group group
-    = {ascending_option_def.def ()};
+  static const gdb::option::option_def_group group[] = {
+    {ascending_option_def.def ()},
+    {qcs_flags_option_defs},
+  };
 
   if (gdb::option::complete_options (tracker, &text, group))
     return;

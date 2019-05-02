@@ -20,6 +20,8 @@
 #ifndef CLI_CLI_UTILS_H
 #define CLI_CLI_UTILS_H
 
+#include "cli/cli-option.h"
+
 /* *PP is a string denoting a number.  Get the number.  Advance *PP
    after the string and any trailing whitespace.
 
@@ -218,23 +220,18 @@ check_for_argument (char **str, const char *arg)
   return check_for_argument (str, arg, strlen (arg));
 }
 
-/* A helper function that looks for a set of flags at the start of a
-   string.  The possible flags are given as a null terminated string.
-   A flag in STR must either be at the end of the string,
-   or be followed by whitespace.
-   Returns 0 if no valid flag is found at the start of STR.
-   Otherwise updates *STR, and returns N (which is > 0),
-   such that FLAGS [N - 1] is the valid found flag.  */
-extern int parse_flags (const char **str, const char *flags);
-
 /* qcs_flags struct regroups the flags parsed by parse_flags_qcs.  */
 
 struct qcs_flags
 {
-  bool quiet = false;
-  bool cont = false;
-  bool silent = false;
+  int quiet = false;
+  int cont = false;
+  int silent = false;
 };
+
+extern const gdb::option::option_def qcs_flags_option_defs[3];
+
+extern void validate_flags_qcs (const char *which_command, qcs_flags *flags);
 
 /* A helper function that uses parse_flags to handle the flags qcs :
      A flag -q sets FLAGS->QUIET to true.
