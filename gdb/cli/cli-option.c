@@ -142,9 +142,8 @@ parse_option (gdb::array_view<const option_def_group> options_group,
     return {};
 
   /* Skip the initial '-'.  */
-  *args += 1;
+  const char *arg = *args + 1;
 
-  const char *arg = *args;
   const char *after = skip_to_space (arg);
   size_t len = after - arg;
   const option_def *match = nullptr;
@@ -172,7 +171,8 @@ parse_option (gdb::array_view<const option_def_group> options_group,
 	      match = &o;
 	      match_ctx = grp.ctx;
 
-	      if (isspace (arg[len]) || arg[len] == '\0')
+	      if ((isspace (arg[len]) || arg[len] == '\0')
+		  && strlen (o.name) == len)
 		break; /* Exact match.  */
 	    }
 	}
@@ -183,7 +183,7 @@ parse_option (gdb::array_view<const option_def_group> options_group,
       if (!have_marker)
 	return {};
 
-      error (_("Unrecognized option at: -%s"), arg);
+      error (_("Unrecognized option at: %s"), *args);
     }
 
   if (completion != nullptr && arg[len] == '\0')
@@ -193,7 +193,7 @@ parse_option (gdb::array_view<const option_def_group> options_group,
       return {};
     }
 
-  *args += len;
+  *args += 1 + len;
   *args = skip_spaces (*args);
   if (completion != nullptr)
     completion->word = *args;
