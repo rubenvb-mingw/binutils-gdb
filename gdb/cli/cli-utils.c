@@ -558,7 +558,8 @@ parse_flags_qcs (const char *which_command, const char **str,
     { {qcs_flags_option_defs}, flags },
   };
 
-  gdb::option::process_options (str, grp);
+  if (!gdb::option::process_options (str, grp))
+    return false;
 
   validate_flags_qcs (which_command, flags);
 

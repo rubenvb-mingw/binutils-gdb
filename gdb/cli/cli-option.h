@@ -261,8 +261,9 @@ extern void
 extern void build_help (gdb::array_view<const option_def> options,
 			std::string &help);
 
-/* Process ARGS, using OPTIONS_GROUP as valid options.  */
-extern void process_options
+/* Process ARGS, using OPTIONS_GROUP as valid options.  Returns true
+   if any option was successfully parsed.  */
+extern bool process_options
   (const char **args,
    gdb::array_view<const option_def_group> options_group);
 

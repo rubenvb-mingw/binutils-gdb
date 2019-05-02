@@ -431,12 +431,12 @@ complete_options (completion_tracker &tracker,
 
 /* See cli-option.h.  */
 
-void
+bool
 process_options (const char **args,
 		 gdb::array_view<const option_def_group> options_group)
 {
   if (*args == nullptr)
-    return;
+    return false;
 
   /* If ARGS starts with "-", look for a "--" sequence.  If one is
      found, then interpret everything up until the "--" as
@@ -445,13 +445,17 @@ process_options (const char **args,
      "-1" in "(gdb) print -1" would be interpreted as an option.  */
   bool have_marker = find_end_options_marker (*args) != nullptr;
 
+  bool processed_any = false;
+
   while (1)
     {
       *args = skip_spaces (*args);
 
       auto ov = parse_option (options_group, have_marker, args);
       if (!ov)
-	break;
+	return processed_any;
+
+      processed_any = true;
 
       switch (ov->option.type)
 	{
