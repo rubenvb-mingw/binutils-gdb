@@ -3248,17 +3248,6 @@ Prints the argument variables of the current stack frame.\n"),
 Select the stack frame that contains NAME.\n\
 Usage: func NAME"));
 
-#if 0
-  add_setshow_boolean_cmd ("frame-arguments", no_class,
-			   &print_raw_frame_arguments, _("\
-Set whether to print frame arguments in raw form."), _("\
-Show whether to print frame arguments in raw form."), _("\
-If set, frame arguments are printed in raw form, bypassing any\n\
-pretty-printers for that value."),
-			   NULL, NULL,
-			   &setprintrawlist, &showprintrawlist);
-#endif
-
   add_setshow_auto_boolean_cmd ("disassemble-next-line", class_stack,
 			        &disassemble_next_line, _("\
 Set whether to disassemble next source line or insn when execution stops."),
@@ -3282,4 +3271,14 @@ source line."),
   gdb::option::add_setshow_cmds_for_options
     (class_stack, &user_frame_print_options,
      frame_print_option_defs, &setprintlist, &showprintlist);
+
+  /* The above installs a "set print raw-frame-arguments", because the
+     option is called "print -raw-frame-arguments".  Rename the
+     command to "set print raw frame-arguments", to keep backward
+     compatibility -- the "raw frame-arguments" command already
+     existed when print options were first added.  */
+  rename_cmd ("raw-frame-arguments", &setprintlist,
+	      "frame-arguments", &setprintrawlist);
+  rename_cmd ("raw-frame-arguments", &showprintlist,
+	      "frame-arguments", &showprintrawlist);
 }
