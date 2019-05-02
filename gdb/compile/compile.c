@@ -323,6 +323,9 @@ compile_code_command (const char *args, int from_tty)
   compile_options options;
   options.process (&args);
 
+  if (args != NULL && args[0] == '-')
+    error (_("Unknown argument specified."));
+
   enum compile_i_scope_types scope
     = options.raw ? COMPILE_I_RAW_SCOPE : COMPILE_I_SIMPLE_SCOPE;
 
